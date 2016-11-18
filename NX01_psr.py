@@ -49,6 +49,7 @@ class PsrObj(object):
     epflags = None
     detsig_avetoas = None
     detsig_Uinds = None
+    planet_ssb = None
 
     def __init__(self, t2obj):
         self.T2psr = t2obj
@@ -82,6 +83,7 @@ class PsrObj(object):
         self.epflags = None
         self.detsig_avetoas = None
         self.detsig_Uinds = None
+        self.planet_ssb = None
 
     """
     Initialise the libstempo object.
@@ -98,6 +100,24 @@ class PsrObj(object):
         self.obs_freqs = np.double(self.T2psr.ssbfreqs())
         self.Mmat = np.double(self.T2psr.designmatrix())
 
+        # get the position vectors of the planets
+        for ii in range(1,10):
+            tag = 'DMASSPLANET'+str(ii)
+            self.T2psr[tag].val = 0.0
+        self.T2psr.formbats()
+        self.planet_ssb = np.zeros((len(self.toas),9,6))
+        self.planet_ssb[:,0,:] = self.T2psr.mercury_ssb
+        self.planet_ssb[:,1,:] = self.T2psr.venus_ssb
+        self.planet_ssb[:,2,:] = self.T2psr.earth_ssb
+        self.planet_ssb[:,3,:] = self.T2psr.mars_ssb
+        self.planet_ssb[:,4,:] = self.T2psr.jupiter_ssb
+        self.planet_ssb[:,5,:] = self.T2psr.saturn_ssb
+        self.planet_ssb[:,6,:] = self.T2psr.uranus_ssb
+        self.planet_ssb[:,7,:] = self.T2psr.neptune_ssb
+        self.planet_ssb[:,8,:] = self.T2psr.pluto_ssb
+
+        print "--> Grabbed the planet position-vectors at the pulsar timestamps."
+
         isort, iisort = None, None
         if 'pta' in self.T2psr.flags():
             if 'NANOGrav' in list(set(self.T2psr.flagvals('pta'))):
@@ -106,8 +126,12 @@ class PsrObj(object):
                     isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('group'),
                                                       which='jitterext', dt=jitterbin/86400.)
                 except KeyError:
-                    isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f'),
-                                                      which='jitterext', dt=jitterbin/86400.)
+                    try:
+                        isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f'),
+                                                        which='jitterext', dt=jitterbin/86400.)
+                    except KeyError:
+                        isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('be'),
+                                                        which='jitterext', dt=jitterbin/86400.)
         
                 # sort data
                 self.toas = self.toas[isort]
@@ -115,6 +139,7 @@ class PsrObj(object):
                 self.res = self.res[isort]
                 self.obs_freqs = self.obs_freqs[isort]
                 self.Mmat = self.Mmat[isort, :]
+                self.planet_ssb = self.planet_ssb[isort, :, :]
 
                 print "--> Initial sorting of data."
               
@@ -134,10 +159,11 @@ class PsrObj(object):
             self.psr_locs = [float(repr(coords.ra)),float(repr(coords.dec))]
 
         print "--> Grabbed the pulsar position."
+        
         ################################################################################################
             
         # These are all the relevant system flags used by the PTAs.
-        system_flags = ['group','sys','i','f']
+        system_flags = ['group','sys','i','f','be']
         self.sysflagdict = OrderedDict.fromkeys(system_flags)
 
         # Put the systems into a dictionary which 
@@ -175,13 +201,22 @@ class PsrObj(object):
                           np.where(self.T2psr.flagvals('group')[isort] == nano_flags[kk])
                     self.sysflagdict.update(nanoflagdict)
                 except KeyError:
-                    nanoflagdict = OrderedDict.fromkeys(['nano-f'])
-                    nano_flags = list(set(self.T2psr.flagvals('f')[pta_maskdict['NANOGrav']]))
-                    nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
-                    for kk,subsys in enumerate(nano_flags):
-                        nanoflagdict['nano-f'][subsys] = \
-                          np.where(self.T2psr.flagvals('f')[isort] == nano_flags[kk])
-                    self.sysflagdict.update(nanoflagdict)
+                    try:
+                        nanoflagdict = OrderedDict.fromkeys(['nano-f'])
+                        nano_flags = list(set(self.T2psr.flagvals('f')[pta_maskdict['NANOGrav']]))
+                        nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
+                        for kk,subsys in enumerate(nano_flags):
+                            nanoflagdict['nano-f'][subsys] = \
+                              np.where(self.T2psr.flagvals('f')[isort] == nano_flags[kk])
+                        self.sysflagdict.update(nanoflagdict)
+                    except KeyError:
+                        nanoflagdict = OrderedDict.fromkeys(['nano-f'])
+                        nano_flags = list(set(self.T2psr.flagvals('be')[pta_maskdict['NANOGrav']]))
+                        nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
+                        for kk,subsys in enumerate(nano_flags):
+                            nanoflagdict['nano-f'][subsys] = \
+                              np.where(self.T2psr.flagvals('be')[isort] == nano_flags[kk])
+                        self.sysflagdict.update(nanoflagdict)
                     
         
         # If there are really no relevant flags,
@@ -203,9 +238,12 @@ class PsrObj(object):
                     #which='jitterext', dt=jitterbin/86400.)
                     flags = self.T2psr.flagvals('group')[isort]
                 except KeyError:
+                    try:
                     #isort_b, iisort_b = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f')[isort],
                     #which='jitterext', dt=jitterbin/86400.)
-                    flags = self.T2psr.flagvals('f')[isort]
+                        flags = self.T2psr.flagvals('f')[isort]
+                    except KeyError:
+                        flags = self.T2psr.flagvals('be')[isort]
         
                 # sort data
                 #self.toas = self.toas[isort_b]
@@ -357,6 +395,8 @@ class PsrObjFromH5(object):
     t2ecorrs = None
     parRedamp = None
     parRedind = None
+    parDMamp = None
+    parDMind = None
     efacs = None
     equads = None
     ecorrs = None
@@ -364,6 +404,7 @@ class PsrObjFromH5(object):
     Redind = None
     DMamp = None
     DMind = None
+    planet_ssb = None
 
     def __init__(self, h5Obj):
         self.h5Obj = h5Obj
@@ -402,6 +443,8 @@ class PsrObjFromH5(object):
         self.t2ecorrs = None
         self.parRedamp = None
         self.parRedind = None
+        self.parDMamp = None
+        self.parDMind = None
         self.efacs = None
         self.equads = None
         self.ecorrs = None
@@ -409,11 +452,12 @@ class PsrObjFromH5(object):
         self.Redind = None
         self.DMamp = None
         self.DMind = None
+        self.planet_ssb = None
 
     """
     Read data from hdf5 file into pulsar object
     """
-    def grab_all_vars(self, rescale=True): 
+    def grab_all_vars(self, rescale=True, sysflag_target=None): 
 
         print "--> Extracting {0} from hdf5 file".format(self.h5Obj['name'].value)
         
@@ -432,6 +476,10 @@ class PsrObjFromH5(object):
         self.obs_freqs = self.h5Obj['freq'].value
 
         self.psr_locs = self.h5Obj['psrlocs'].value
+        try:
+            self.planet_ssb = self.h5Obj['planetssb'].value
+        except:
+            self.planet_ssb = None
 
         self.Mmat = self.h5Obj['designmatrix'].value
         try:
@@ -473,14 +521,26 @@ class PsrObjFromH5(object):
         self.t2equads = OrderedDict(t2equads)
         self.t2ecorrs = OrderedDict(t2ecorrs)
 
-        # Let's rip out the red noise properties if present
+        # Let's rip out the red-noise/DM properties if present
         self.parRedamp = 1e-20
         self.parRedind = 0.0
+        self.parDMamp = 1e-20
+        self.parDMind = 0.0
         for ll in parlines:
             if 'RNAMP' in ll:
-                self.parRedamp = ll.split()[1] # 1e-6 * f1yr * np.sqrt(12.0*np.pi**2.0) * np.double(ll.split()[1]) 
+                self.parRedamp = np.double(ll.split()[1]) # 1e-6 * f1yr * np.sqrt(12.0*np.pi**2.0) * np.double(ll.split()[1])
+            elif 'TNRedAmp' in ll:
+                self.parRedamp = 10.0**np.double(ll.split()[1])
+
             if 'RNIDX' in ll:
                 self.parRedind = -np.double(ll.split()[1])
+            elif 'TNRedGam' in ll:
+                self.parRedind = np.double(ll.split()[1])
+
+            if 'TNDMAmp' in ll:
+                self.parDMamp = 10.0**np.double(ll.split()[1]) * np.sqrt(12.0*np.pi**2.0)
+            if 'TNDMGam' in ll:
+                self.parDMind = np.double(ll.split()[1])
 
         # Let's also find single pulsar analysis EFACS, EQUADS, ECORRS
         self.Redamp = 1e-20
@@ -515,31 +575,37 @@ class PsrObjFromH5(object):
                 if 'RN-spectral-index' in ll:
                     self.Redind = np.double(ll.split()[1])
                 if 'DM-Amplitude' in ll:
-                    self.DMamp = 10.0**np.double(ll.split()[1]) 
+                    # special edit below since AP's DM-amps use TN convention
+                    self.DMamp = 10.0**np.double(ll.split()[1]) * np.sqrt(12.0*np.pi**2.0)
                 if 'DM-spectral-index' in ll:
                     self.DMind = np.double(ll.split()[1])
 
             # Time to rescale the TOA uncertainties by single-pulsar EFACS and EQUADS
-            if self.sysflagdict['f'] is not None:
-                # for nanograv
-                systems = self.sysflagdict['f']
-            elif self.sysflagdict['f'] is None and self.sysflagdict['sys'] is not None:
-                # for the epta
-                systems = self.sysflagdict['sys']
+            if sysflag_target is not None:
+                systems = self.sysflagdict[sysflag_target]
+            else:
+                if self.sysflagdict['group'] is not None:
+                    # for nanograv/ipta
+                    systems = self.sysflagdict['group']
+                elif self.sysflagdict['f'] is not None:
+                    # for nanograv
+                    systems = self.sysflagdict['f']
+                elif self.sysflagdict['sys'] is not None:
+                    # for the epta
+                    systems = self.sysflagdict['sys']
+                elif self.sysflagdict['be'] is not None:
+                    # for nanograv 5-yr
+                    systems = self.sysflagdict['be']
                 
-            if rescale==True:
+            if rescale:
                 tmp_errs = self.toaerrs.copy()
 
                 for sysname in systems:
                     tmp_errs[systems[sysname]] *= self.efacs[sysname] 
 
-                ###
-
                 t2equad_bit = np.ones(len(tmp_errs))
                 for sysname in systems:
                     t2equad_bit[systems[sysname]] *= self.equads[sysname]
-
-                ###
 
                 tmp_errs = np.sqrt( tmp_errs**2.0 + t2equad_bit**2.0 )
                 self.toaerrs = tmp_errs
@@ -547,19 +613,25 @@ class PsrObjFromH5(object):
 
         print "--> Done extracting pulsar from hdf5 file :-) \n"
 
-    def makeFred(self, nmodes, Ttot, phaseshift=False):
+    def makeFred(self, nmodes, Ttot, phaseshift=False, input_freqs=None):
         
-        self.Fred, self.ranphase = utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes,
-                                                                       pshift=phaseshift, Tspan=Ttot)
+        self.Fred, self.ranphase = \
+          utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes,
+                                              pshift=phaseshift, Tspan=Ttot,
+                                              input_freqs=input_freqs)
 
-    def makeFdm(self, nmodes, Ttot):
+    def makeFdm(self, nmodes, obs_freqs, Ttot, input_freqs=None):
         
-        self.Fdm = utils.createFourierDesignmatrix_dm(self.toas, nmodes, self.obs_freqs, Tspan=Ttot)
+        self.Fdm = utils.createFourierDesignmatrix_dm(self.toas, nmodes=nmodes,
+                                                      obs_freqs=self.obs_freqs,
+                                                      Tspan=Ttot, input_freqs=input_freqs)
 
-    def makeFeph(self, nmodes, Ttot):
+    def makeFeph(self, nmodes, psr_locs, Ttot, input_freqs=None):
         
         self.Fephx, self.Fephy, self.Fephz = \
-          utils.createFourierDesignmatrix_eph(self.toas, nmodes, self.psr_locs, Tspan=Ttot)
+          utils.createFourierDesignmatrix_eph(self.toas, nmodes=nmodes,
+                                              psr_locs=self.psr_locs, Tspan=Ttot,
+                                              input_freqs=input_freqs)
     
     def makeFtot(self, nmodes, Ttot, phaseshift=False):
         
@@ -569,23 +641,32 @@ class PsrObjFromH5(object):
 
         self.Ftot = np.append(self.Fred, self.Fdm, axis=1)
 
-    def makeTe(self, nmodes, Ttot, makeDM=False, makeEph=False, phaseshift=False):
+    def makeTe(self, nmodes_red, Ttot, makeDM=False, nmodes_dm=None,
+               makeEph=False, nmodes_eph=None, ephFreqs=None, phaseshift=False):
 
-        self.Fred, self.ranphase = utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes,
+        self.Fred, self.ranphase = utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes_red,
                                                                        pshift=phaseshift, Tspan=Ttot)
 
+        self.Ftot = self.Fred
         if makeDM:
-            self.Fdm = utils.createFourierDesignmatrix_dm(self.toas, nmodes, self.obs_freqs, Tspan=Ttot)
-            self.Ftot = np.append(self.Fred, self.Fdm, axis=1)
+            if nmodes_dm is None:
+                nmodes_tmp = nmodes_red
+            else:
+                nmodes_tmp = nmodes_dm
+            self.Fdm = utils.createFourierDesignmatrix_dm(self.toas, nmodes_tmp, self.obs_freqs, Tspan=Ttot)
+            self.Ftot = np.append(self.Ftot, self.Fdm, axis=1)
         if makeEph:
+            if nmodes_eph is None:
+                nmodes_tmp = nmodes_red
+            else:
+                nmodes_tmp = nmodes_eph
             self.Fephx, self.Fephy, self.Fephz = \
-              utils.createFourierDesignmatrix_eph(self.toas, nmodes, self.psr_locs, Tspan=Ttot)
+              utils.createFourierDesignmatrix_eph(self.toas, nmodes_tmp, self.psr_locs,
+                                                  Tspan=Ttot, input_freqs=ephFreqs)
             self.Ftot = np.append(self.Ftot, self.Fephx, axis=1)
             self.Ftot = np.append(self.Ftot, self.Fephy, axis=1)
             self.Ftot = np.append(self.Ftot, self.Fephz, axis=1)
-        if not makeDM and not makeEph:
-            self.Ftot = self.Fred
-
+        
         self.Te = np.append(self.Gc, self.Ftot, axis=1)
 
     def two_comp_noise(self, mlerrors):

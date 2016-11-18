@@ -131,33 +131,39 @@ def makeDmTDcov(psr, Adm, gam_dm, tm):
     return Cdm
 
 
-def createFourierDesignmatrix_red(t, nmodes, freq=False,
-                                  pshift=False, Tspan=None):
+def createFourierDesignmatrix_red(t, nmodes, output_freqs=False, pshift=False,
+                                  Tspan=None, input_freqs=None):
     """
     Construct fourier design matrix from eq 11 of Lentati et al, 2013
 
     @param t: vector of time series in seconds
     @param nmodes: number of fourier coefficients to use
-    @param freq: option to output frequencies
+    @param output_freqs: option to output frequencies
     @param pshift: option to add random phase shift
     @param Tspan: option to some other Tspan
+    @param input_freqs: user-defined sampling frequencies
+                        (number must match nmodes)
 
     @return: F: fourier design matrix
-    @return: f: Sampling frequencies (if freq=True)
+    @return: f: Sampling frequencies (if output_freqs=True)
 
     """
 
     N = len(t)
     F = np.zeros((N, 2*nmodes))
 
-    if Tspan is not None:
-        T = Tspan
-    else:
-        T = t.max() - t.min()
-
     # define sampling frequencies
-    fqs = np.linspace(1/T, nmodes/T, nmodes)
-    
+    if input_freqs is None:
+        if Tspan is not None:
+            T = Tspan
+        else:
+            T = t.max() - t.min()
+        fqs = np.linspace(1/T, nmodes/T, nmodes)
+    elif input_freqs is not None:
+        fqs = np.array([float(item) for item \
+                        in input_freqs.split(',')])
+
+    # add random phase shift to basis functions
     if pshift:
         ranphase = np.random.uniform(0.0, 2.0*np.pi, nmodes)
     elif not pshift:
@@ -176,36 +182,42 @@ def createFourierDesignmatrix_red(t, nmodes, freq=False,
             
         ct += 1
 
-    if freq:
+    if output_freqs:
         return F, fqs, ranphase
     else:
         return F, ranphase
 
-def createFourierDesignmatrix_dm(t, nmodes, obs_freqs, freq=False, Tspan=None):
+def createFourierDesignmatrix_dm(t, nmodes, obs_freqs, output_freqs=False,
+                                 Tspan=None, input_freqs=None):
     """
     Construct fourier design matrix from eq 11 of Lentati et al, 2013
 
     @param t: vector of time series in seconds
     @param nmodes: number of fourier coefficients to use
-    @param freq: option to output frequencies
+    @param obs_freqs: pulsar radio observing frequencies
+    @param output_freqs: option to output frequencies
     @param Tspan: option to some other Tspan
-    @param pbs_freqs: pulsar observing frequencies
+    @param input_freqs: user-defined sampling frequencies
+                        (number must match nmodes)
 
     @return: F: fourier design matrix
-    @return: f: Sampling frequencies (if freq=True)
+    @return: f: Sampling frequencies (if output_freqs=True)
 
     """
 
     N = len(t)
     F = np.zeros((N, 2*nmodes))
 
-    if Tspan is not None:
-        T = Tspan
-    else:
-        T = t.max() - t.min()
-
     # define sampling frequencies
-    fqs = np.linspace(1/T, nmodes/T, nmodes)
+    if input_freqs is None:
+        if Tspan is not None:
+            T = Tspan
+        else:
+            T = t.max() - t.min()
+        fqs = np.linspace(1/T, nmodes/T, nmodes)
+    elif input_freqs is not None:
+        fqs = np.array([float(item) for item \
+                        in input_freqs.split(',')])
 
     # compute the DM-variation vectors
     K = 2.41 * 10.0**(-16.0)
@@ -219,22 +231,26 @@ def createFourierDesignmatrix_dm(t, nmodes, obs_freqs, freq=False, Tspan=None):
         F[:,ii+1] = np.multiply(np.sin(2*np.pi*fqs[ct]*t),Dm)
         ct += 1
     
-    if freq:
+    if output_freqs:
         return F, fqs
     else:
         return F
 
-def createFourierDesignmatrix_eph(t, nmodes, psr_locs, freq=False, Tspan=None):
+def createFourierDesignmatrix_eph(t, nmodes, psr_locs, output_freqs=False,
+                                  Tspan=None, input_freqs=None):
     """
     Construct fourier design matrix from eq 11 of Lentati et al, 2013
 
     @param t: vector of time series in seconds
     @param nmodes: number of fourier coefficients to use
     @param psr_locs: phi and theta coordinates of pulsar
+    @param output_freqs: option to output frequencies
     @param Tspan: option to some other Tspan
+    @param input_freqs: user-defined sampling frequencies
+                        (number must match nmodes)
 
     @return: F: fourier design matrix along each positional basis vector
-    @return: f: Sampling frequencies (if freq=True)
+    @return: f: Sampling frequencies (if output_freqs=True)
 
     """
 
@@ -243,20 +259,23 @@ def createFourierDesignmatrix_eph(t, nmodes, psr_locs, freq=False, Tspan=None):
     Fy = np.zeros((N, 2*nmodes))
     Fz = np.zeros((N, 2*nmodes))
 
-    if Tspan is not None:
-        T = Tspan
-    else:
-        T = t.max() - t.min()
-
     # define sampling frequencies
-    fqs = np.linspace(1/T, nmodes/T, nmodes)
+    if input_freqs is None:
+        if Tspan is not None:
+            T = Tspan
+        else:
+            T = t.max() - t.min()
+        fqs = np.linspace(1/T, nmodes/T, nmodes)
+    elif input_freqs is not None:
+        fqs = np.array([float(item) for item \
+                        in input_freqs.split(',')])
 
     # define the pulsar position vector
-    phi = psr_loc[0]
+    phi = psr_locs[0]
     theta = np.pi/2. - psr_locs[1]
-    x = np.tile(np.sin(theta)*np.cos(phi), 2*nmodes)
-    y = np.tile(np.sin(theta)*np.sin(phi), 2*nmodes)
-    z = np.tile(np.cos(theta), 2*nmodes)
+    x = np.sin(theta)*np.cos(phi)
+    y = np.sin(theta)*np.sin(phi)
+    z = np.cos(theta)
 
     # The sine/cosine modes
     ct = 0
@@ -270,17 +289,19 @@ def createFourierDesignmatrix_eph(t, nmodes, psr_locs, freq=False, Tspan=None):
         Fz[:,ii+1] = np.sin(2*np.pi*fqs[ct]*t)
         ct += 1
 
-    Fx = np.dot(Fx,x)
-    Fy = np.dot(Fy,y)
-    Fz = np.dot(Fz,z)
-    
-    if freq:
+    Fx = Fx * x
+    Fy = Fy * y
+    Fz = Fz * z
+
+    if output_freqs:
         return Fx, Fy, Fz, fqs
     else:
         return Fx, Fy, Fz
 
 def quantize_fast(times, dt=1.0, calci=False):
-    """ Adapted from libstempo: produce the quantisation matrix fast """
+    """
+    Adapted from libstempo: produce the quantisation matrix fast
+    """
     isort = np.argsort(times)
     
     bucket_ref = [times[isort[0]]]
@@ -581,8 +602,9 @@ def quantreduce(U, eat, flags, calci=False):
     return rv
 
 def dailyAve(times, res, err, ecorr, dt=1, flags=None):
-    # Does not work yet in NX01"
-
+    """
+    !!!!! Does not work yet in NX01 !!!!
+    """
     isort = np.argsort(times)
     
     bucket_ref = [times[isort[0]]]
@@ -908,9 +930,9 @@ def get_cn(n, mc, dl, h0, F, e):
     omega = 2 * np.pi * F
 
     if h0 is None:
-        amp = n * mc**(5/3) * omega**(2/3) / dl
+        amp = 2 * mc**(5/3) * omega**(2/3) / dl
     elif h0 is not None:
-        amp = n * h0 / 2.0
+        amp = h0
      
     ret = amp * ss.jn(n,n*e) / (n * omega)
 
@@ -935,11 +957,6 @@ def calculate_splus_scross(nmax, mc, dl, h0, F, e, t, l0, gamma, gammadot, inc):
     :param inc: Inclination angle [rad]
 
     """ 
-    '''if e < 0.001:
-        n = np.array([2])
-        nmax = 2
-    else:
-        n = np.arange(1, nmax)'''
     n = np.arange(1, nmax)
 
     # time dependent amplitudes
@@ -955,23 +972,6 @@ def calculate_splus_scross(nmax, mc, dl, h0, F, e, t, l0, gamma, gammadot, inc):
     # tiled phase
     phase1 = n * np.tile(lt, (nmax-1,1)).T
     phase2 = np.tile(gt, (nmax-1,1)).T
-    #phasep = phase1 + 2*phase2
-    #phasem = phase1 - 2*phase2
-
-    # intermediate terms
-    #sp = np.sin(phasem)/(n*omega-2*gammadot) + \
-    #        np.sin(phasep)/(n*omega+2*gammadot)
-    #sm = np.sin(phasem)/(n*omega-2*gammadot) - \
-    #        np.sin(phasep)/(n*omega+2*gammadot)
-    #cp = np.cos(phasem)/(n*omega-2*gammadot) + \
-    #        np.cos(phasep)/(n*omega+2*gammadot)
-    #cm = np.cos(phasem)/(n*omega-2*gammadot) - \
-    #        np.cos(phasep)/(n*omega+2*gammadot)
-    #
-    #
-    #splus_n = -0.5 * (1+np.cos(inc)**2) * (an*sp - bn*sm) + \
-    #        (1-np.cos(inc)**2)*cn * np.sin(phase1)
-    #scross_n = np.cos(inc) * (an*cm - bn*cp)
 
     sinp1 = np.sin(phase1)
     cosp1 = np.cos(phase1)
@@ -1319,6 +1319,26 @@ def bwmsignal_psr(parameters, t):
 
     # Return the time-series for the pulsar
     return amp * s * heaviside(t - epoch) * (t - epoch)
+
+
+def glitch_signal(psr, epoch, amp):
+    """
+    Like pulsar term BWM event, but now differently parameterized: an
+    amplitude (log-amp) parameter, and an epoch. [source: piccard]
+    
+    :param psr: pulsar object
+    :param epoch: TOA time (MJD) the burst hits the earth
+    :param amp: amplitude of the glitch
+    """
+    
+    # Define the heaviside function
+    heaviside = lambda x: 0.5 * (np.sign(x) + 1)
+
+    # Glitches are spontaneous spin-up events.
+    # Thus TOAs will be advanced, and resiudals will be negative.
+    
+    return  -10.0**amp * heaviside(psr.toas - epoch) * \
+      (psr.toas - epoch)*86400.0
 
 
 def real_sph_harm(ll, mm, phi, theta):

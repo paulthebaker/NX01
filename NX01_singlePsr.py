@@ -10,18 +10,22 @@ Code contributions by Rutger van Haasteren (piccard) and Justin Ellis (PAL/PAL2)
 
 from __future__ import division
 import os, math, optparse, time, cProfile
+import json, sys
+import cPickle as pickle
 from time import gmtime, strftime
 from collections import OrderedDict
+import h5py as h5
 
 import numpy as np
 from numpy import *
+from numpy import random
 
 from scipy import integrate
 from scipy import optimize
-from scipy import constants
-from numpy import random
+from scipy import constants as sc
 from scipy import special as ss
 from scipy import linalg as sl
+from scipy.interpolate import interp1d
 
 import numexpr as ne
 import ephem
@@ -33,21 +37,65 @@ import NX01_AnisCoefficients as anis
 import NX01_utils as utils
 import NX01_psr
 
-import pyximport
-pyximport.install(setup_args={"include_dirs":np.get_include()},
-                  reload_support=True)
+try:
+    import NX01_jitter as jitter
+except ImportError:
+    print "You do not have NX01_jitter.so. " \
+      "Trying to make the .so file now..."
+    import pyximport
+    pyximport.install(setup_args={"include_dirs":np.get_include()},
+                      reload_support=True)
+    try:
+        import NX01_jitter as jitter
+    except ImportError:
+        error_warning = """\
+         _____ __  __ _____   ____  _____ _______   ______ _____  _____   ____  _____  _ _          
+        |_   _|  \/  |  __ \ / __ \|  __ \__   __| |  ____|  __ \|  __ \ / __ \|  __ \| | |         
+          | | | \  / | |__) | |  | | |__) | | |    | |__  | |__) | |__) | |  | | |__) | | |         
+          | | | |\/| |  ___/| |  | |  _  /  | |    |  __| |  _  /|  _  /| |  | |  _  /| | |         
+         _| |_| |  | | |    | |__| | | \ \  | |    | |____| | \ \| | \ \| |__| | | \ \|_|_|         
+        |_____|_|  |_|_|     \____/|_|  \_\ |_|    |______|_|  \_\_|  \_\\____/|_|  \_(_|_)         
+         _____ ____  __  __ _____ _____ _      ______        _ _____ _______ _______ ______ _____  
+        / ____/ __ \|  \/  |  __ \_   _| |    |  ____|      | |_   _|__   __|__   __|  ____|  __ \ 
+       | |   | |  | | \  / | |__) || | | |    | |__         | | | |    | |     | |  | |__  | |__) |
+       | |   | |  | | |\/| |  ___/ | | | |    |  __|    _   | | | |    | |     | |  |  __| |  _  / 
+       | |___| |__| | |  | | |    _| |_| |____| |____  | |__| |_| |_   | |     | |  | |____| | \ \ 
+        \_____\____/|_|  |_|_|   |_____|______|______|  \____/|_____|  |_|     |_|  |______|_|  \_\
+        """
+        print error_warning
+        print "You need to run: " \
+          "python setup-cython.py build_ext --inplace"
+        sys.exit()
+    
 
-import NX01_jitter as jitter
-
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
+try:
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+except ImportError:
+    print 'Do not have mpi4py package.'
+    import nompi4py as MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    
 
 parser = optparse.OptionParser(description = "NX01 - It's been a long road, getting from there to here")
 
 ############################
 ############################
 
+parser.add_option('--sampler', dest='sampler', action='store', type=str, default='ptmcmc',
+                   help='Which sampler do you want to use: PTMCMC (ptmcmc), MultiNest (mnest), or Polychord (pchord) (default = ptmcmc)')
+parser.add_option('--ins', dest='ins', action='store_true', default=False,
+                   help='Switch on importance nested sampling for MultiNest (default = False)')
+parser.add_option('--nlive', dest='nlive', action='store', type=int, default=500,
+                   help='Number of live points for MultiNest or Polychord (default = 500)')
+parser.add_option('--sampleEff', dest='sampleEff', action='store', type=float, default=0.3,
+                   help='Sampling efficiency for MultiNest (default = 0.3)')
+parser.add_option('--constEff', dest='constEff', action='store_true', default=False,
+                   help='Run MultiNest in constant efficiency mode? (default = False)')
+parser.add_option('--resume', dest='resume', action='store_true', default=False,
+                   help='Do you want to resume the sampler (default = False)')
 parser.add_option('--nmodes', dest='nmodes', action='store', type=int,
                    help='Number of modes in low-rank time-frequency approximation')
 parser.add_option('--cadence', dest='cadence', action='store', type=float, default=14.0,
@@ -66,10 +114,18 @@ parser.add_option('--dmVar', dest='dmVar', action='store_true', default=False,
                    help='Search for DM variations in the data (False)? (default=False)')
 parser.add_option('--fullN', dest='fullN', action='store_true', default=False,
                    help='Search for EFAC/EQUAD/ECORR over all systems (True), or just apply a GEFAC (False)? (default=False)')
+parser.add_option('--incGlitch', dest='incGlitch', action='store_true', default=False,
+                   help='Search for a glitch in the pulsar? (default=False)')
 parser.add_option('--jitterbin', dest='jitterbin', action='store', type=float, default=1.0,
                    help='What time duration do you want a jitter bin to be? (default = 1.0)')
 parser.add_option('--mnest', dest='mnest', action='store_true', default=False,
                    help='Do you want to sample using MultiNest? (default=False)')
+parser.add_option('--writeHotChains', dest='writeHotChains', action='store_true', default=False,
+                   help='Do you want to store hot PTMCMC chains? (default=False)')
+parser.add_option('--hotChain', dest='hotChain', action='store_true', default=False,
+                   help='Do you want to include a very hot chain? (default=False)')
+parser.add_option('--dirExt', dest='dirExt', action='store', type=str, default='./chains_nanoAnalysis/',
+                  help='What master directory name do you want to put this run into? (default = ./chains_nanoAnalysis/)')
 
 (args, x) = parser.parse_args()
 
@@ -113,10 +169,11 @@ else:
            "which determines the upper frequency limit and the number of modes, got it?\n")
 
 
-if args.mnest:
+if args.sampler == 'mnest':
     import pymultinest
-else:
-    import PALInferencePTMCMC as PAL
+elif args.sampler == 'ptmcmc':
+    import PTMCMCSampler
+    from PTMCMCSampler import PTMCMCSampler as ptmcmc
     
 #####################################################################
 # PASSING THROUGH TEMPO2 VIA libstempo
@@ -172,10 +229,14 @@ pmin = np.append(pmin,0.001*np.ones(len(systems)))
 pmax = np.append(pmax,10.0*np.ones(len(systems)))
 if args.fullN:
     pmin = np.append(pmin,-10.0*np.ones(len(systems)))
-    pmax = np.append(pmax,-5.0*np.ones(len(systems)))
-    if len(psr.sysflagdict['nano-f'].keys())>0:
-        pmin = np.append(pmin, -8.5*np.ones(len(psr.sysflagdict['nano-f'].keys())))
-        pmax = np.append(pmax, -5.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+    pmax = np.append(pmax,-3.0*np.ones(len(systems)))
+    if 'pta' in t2psr.flags():
+        if len(psr.sysflagdict['nano-f'].keys())>0:
+            pmin = np.append(pmin, -10.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+            pmax = np.append(pmax, -3.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+if args.incGlitch:
+    pmin = np.append(pmin,[np.min(psr.toas),-18.0])
+    pmax = np.append(pmax,[np.max(psr.toas),-11.0])
             
 ################################################################################################################################
 # PRIOR AND LIKELIHOOD
@@ -201,13 +262,23 @@ def ln_prob(xx):
     if args.dmVar:
         Adm = 10.0**xx[ct]
         gam_dm = xx[ct+1]
-
         ct = 4
 
     EFAC = xx[ct:ct+len(systems)]
-    if args.fullN: 
-        EQUAD = 10.0**xx[ct+len(systems):ct+2*len(systems)]
-        ECORR = 10.0**xx[ct+2*len(systems):]
+    ct += len(systems)
+    
+    if args.fullN:
+        EQUAD = 10.0**xx[ct:ct+len(systems)]
+        ct += len(systems)
+
+        if 'pta' in t2psr.flags():
+            if len(psr.sysflagdict['nano-f'].keys())>0:
+                ECORR = 10.0**xx[ct:ct+len(psr.sysflagdict['nano-f'].keys())]
+                ct += len(psr.sysflagdict['nano-f'].keys())
+            
+    if args.incGlitch:
+        glitch_epoch = xx[ct]
+        glitch_lamp = xx[ct+1]
 
     loglike1 = 0
 
@@ -226,6 +297,11 @@ def ln_prob(xx):
     new_err = np.sqrt( scaled_err**2.0 + white_noise**2.0 )
     ########
 
+    if args.incGlitch:
+        model_res = psr.res - utils.glitch_signal(psr, glitch_epoch, glitch_lamp)
+    elif not args.incGlitch:
+        model_res = psr.res
+
     # compute ( T.T * N^-1 * T )
     # & log determinant of N
     if args.fullN:
@@ -234,17 +310,17 @@ def ln_prob(xx):
             for jj,nano_sysname in enumerate(psr.sysflagdict['nano-f'].keys()):
                 Jamp[np.where(psr.epflags==nano_sysname)] *= ECORR[jj]**2.0
 
-            Nx = jitter.cython_block_shermor_0D(psr.res, new_err**2.,
+            Nx = jitter.cython_block_shermor_0D(model_res, new_err**2.,
                                                 Jamp, psr.Uinds)
             d = np.dot(psr.Te.T, Nx)
             logdet_N, TtNT = \
               jitter.cython_block_shermor_2D(psr.Te, new_err**2.,
                                              Jamp, psr.Uinds)
             det_dummy, dtNdt = \
-              jitter.cython_block_shermor_1D(psr.res, new_err**2.,
+              jitter.cython_block_shermor_1D(model_res, new_err**2.,
                                              Jamp, psr.Uinds)
         else:
-            d = np.dot(psr.Te.T, psr.res/( new_err**2.0 ))
+            d = np.dot(psr.Te.T, model_res/( new_err**2.0 ))
         
             N = 1./( new_err**2.0 )
             right = (N*psr.Te.T).T
@@ -253,11 +329,11 @@ def ln_prob(xx):
             logdet_N = np.sum(np.log( new_err**2.0 ))
         
             # triple product in likelihood function
-            dtNdt = np.sum(psr.res**2.0/( new_err**2.0 ))
+            dtNdt = np.sum(model_res**2.0/( new_err**2.0 ))
         
     else:
 
-        d = np.dot(psr.Te.T, psr.res/( new_err**2.0 ))
+        d = np.dot(psr.Te.T, model_res/( new_err**2.0 ))
         
         N = 1./( new_err**2.0 )
         right = (N*psr.Te.T).T
@@ -266,7 +342,7 @@ def ln_prob(xx):
         logdet_N = np.sum(np.log( new_err**2.0 ))
         
         # triple product in likelihood function
-        dtNdt = np.sum(psr.res**2.0/( new_err**2.0 ))
+        dtNdt = np.sum(model_res**2.0/( new_err**2.0 ))
 
     loglike1 += -0.5 * (logdet_N + dtNdt)
     ####################################
@@ -321,11 +397,12 @@ def ln_prob(xx):
         logdet_Sigma = np.sum(2*np.log(np.diag(cf[0])))
 
     except np.linalg.LinAlgError:
-        print 'Cholesky Decomposition Failed second time!! Using SVD instead'
-        u,s,v = sl.svd(Sigma)
-        expval2 = np.dot(v.T, 1/s*np.dot(u.T, d))
-        logdet_Sigma = np.sum(np.log(s))
-
+        #print 'Cholesky Decomposition Failed second time!! Using SVD instead'
+        #u,s,v = sl.svd(Sigma)
+        #expval2 = np.dot(v.T, 1/s*np.dot(u.T, d))
+        #logdet_Sigma = np.sum(np.log(s))
+        print 'Cholesky Decomposition Failed second time!! Getting outta here...'
+        return -np.inf
 
     logLike = -0.5 * (logdet_Phi + logdet_Sigma) + \
       0.5 * (np.dot(d, expval2)) + loglike1
@@ -352,11 +429,13 @@ if args.fullN:
     for ii in range(len(systems)):
         parameters.append('EQUAD_'+systems.keys()[ii])
 
-    if len(psr.sysflagdict['nano-f'].keys())>0:
+    if 'pta' in t2psr.flags() and len(psr.sysflagdict['nano-f'].keys())>0:
         if rank == 0:
             print "\n You have some NANOGrav ECORR parameters..."
         for ii,nano_sysname in enumerate(psr.sysflagdict['nano-f'].keys()):
             parameters.append('ECORR_'+nano_sysname)
+if args.incGlitch:
+    parameters += ["glitch_epoch","glitch_lamp"]
 
 n_params = len(parameters)
 if rank == 0:
@@ -366,11 +445,13 @@ if rank == 0:
 
 # Define a unique file tag
 
-file_tag = 'nanograv_'+psr.name
+file_tag = 'pta_'+psr.name
 file_tag += '_red{0}'.format(args.redamp_prior)
 if args.dmVar:
     file_tag += '_dm{0}'.format(args.dmamp_prior)
-file_tag += '_nmodes{1}'.format(args.nmodes)
+if args.incGlitch:
+    file_tag += '_glitch'
+file_tag += '_nmodes{0}'.format(args.nmodes)
 
 #####################
 # Now, we sample....
@@ -392,9 +473,11 @@ if rank == 0:
 # Define function wrappers
 ###########################
 
-if args.mnest:
+if args.sampler == 'mnest':
 
-    dir_name = './chains_nanoAnalysis/nano_singlePsr/'+file_tag+'_mnest'
+    #dir_name = './chains_nanoAnalysis/nano_singlePsr/'+file_tag+'_mnest'
+    #dir_name = './chn_eptapsr/'+file_tag+'_mnest'
+    dir_name = args.dirExt+file_tag+'_mnest'
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
@@ -416,17 +499,17 @@ if args.mnest:
             
     def like_func(xx,ndim,nparams):
         xx = np.array([xx[ii] for ii in range(nparams)])
-        return lnprob(xx)        
+        return ln_prob(xx)        
     
     pymultinest.run(like_func, prior_func, n_params,
-                    importance_nested_sampling = False,
-                    resume = False, verbose = True, 
-                    n_live_points=500,
+                    importance_nested_sampling = args.ins,
+                    resume = args.resume, verbose = True, 
+                    n_live_points=args.nlive,
                     outputfiles_basename=u'{0}/mnest_'.format(dir_name), 
-                    sampling_efficiency=0.3,
-                    const_efficiency_mode=False)
+                    sampling_efficiency=args.sampleEff,
+                    const_efficiency_mode=args.constEff)
 
-if not args.mnest:
+if args.sampler == 'ptmcmc':
     
     x0 = np.array([-15.0,2.0])
     cov_diag = np.array([0.5,0.5])
@@ -448,7 +531,7 @@ if not args.mnest:
     if rank == 0:
         print "\n Your initial parameters are {0}\n".format(x0)
 
-    dir_name = './chains_nanoAnalysis/nano_singlePsr/'+file_tag+'_ptmcmc'
+    dir_name = args.dirExt+file_tag+'_ptmcmc'
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
@@ -464,10 +547,10 @@ if not args.mnest:
         with open(dir_name+'/run_args.json', 'w') as fp:
             json.dump(vars(args), fp)
     
-    sampler = PAL.PTSampler(ndim = n_params, logl = ln_prob,
+    sampler = ptmcmc.PTSampler(ndim = n_params, logl = ln_prob,
                             logp = my_prior, cov = np.diag(cov_diag),
                             outDir='./{0}'.format(dir_name),
-                            resume = False)
+                            resume = args.resume)
 
     def drawFromRedNoisePrior(parameters, iter, beta):
 
@@ -575,7 +658,9 @@ if not args.mnest:
     sampler.addProposalToCycle(drawFromEquadPrior, 10)
     if (args.fullN==True) and (len(psr.sysflagdict['nano-f'].keys())>0):
         sampler.addProposalToCycle(drawFromEcorrPrior, 10)
-    
-    sampler.sample(p0=x0, Niter=1e6, thin=10,
-                   covUpdate=1000, AMweight=15,
-                   SCAMweight=30, DEweight=50, KDEweight=0)
+
+    sampler.sample(p0=x0, Niter=5e6, thin=10,
+                covUpdate=1000, AMweight=20,
+                SCAMweight=30, DEweight=50,
+                writeHotChains=args.writeHotChains,
+                hotChain=args.hotChain)
