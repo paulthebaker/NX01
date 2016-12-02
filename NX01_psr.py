@@ -88,7 +88,7 @@ class PsrObj(object):
     """
     Initialise the libstempo object.
     """
-    def grab_all_vars(self, jitterbin=10., makeGmat=False, fastDesign=True): # jitterbin is in seconds
+    def grab_all_vars(self, jitterbin=10., makeGmat=False, fastDesign=True, planetssb=False): # jitterbin is in seconds
 
         print "--> Processing {0}".format(self.T2psr.name)
         
@@ -101,22 +101,23 @@ class PsrObj(object):
         self.Mmat = np.double(self.T2psr.designmatrix())
 
         # get the position vectors of the planets
-        for ii in range(1,10):
-            tag = 'DMASSPLANET'+str(ii)
-            self.T2psr[tag].val = 0.0
-        self.T2psr.formbats()
-        self.planet_ssb = np.zeros((len(self.toas),9,6))
-        self.planet_ssb[:,0,:] = self.T2psr.mercury_ssb
-        self.planet_ssb[:,1,:] = self.T2psr.venus_ssb
-        self.planet_ssb[:,2,:] = self.T2psr.earth_ssb
-        self.planet_ssb[:,3,:] = self.T2psr.mars_ssb
-        self.planet_ssb[:,4,:] = self.T2psr.jupiter_ssb
-        self.planet_ssb[:,5,:] = self.T2psr.saturn_ssb
-        self.planet_ssb[:,6,:] = self.T2psr.uranus_ssb
-        self.planet_ssb[:,7,:] = self.T2psr.neptune_ssb
-        self.planet_ssb[:,8,:] = self.T2psr.pluto_ssb
+        if planetssb:
+            for ii in range(1,10):
+                tag = 'DMASSPLANET'+str(ii)
+                self.T2psr[tag].val = 0.0
+            self.T2psr.formbats()
+            self.planet_ssb = np.zeros((len(self.toas),9,6))
+            self.planet_ssb[:,0,:] = self.T2psr.mercury_ssb
+            self.planet_ssb[:,1,:] = self.T2psr.venus_ssb
+            self.planet_ssb[:,2,:] = self.T2psr.earth_ssb
+            self.planet_ssb[:,3,:] = self.T2psr.mars_ssb
+            self.planet_ssb[:,4,:] = self.T2psr.jupiter_ssb
+            self.planet_ssb[:,5,:] = self.T2psr.saturn_ssb
+            self.planet_ssb[:,6,:] = self.T2psr.uranus_ssb
+            self.planet_ssb[:,7,:] = self.T2psr.neptune_ssb
+            self.planet_ssb[:,8,:] = self.T2psr.pluto_ssb
 
-        print "--> Grabbed the planet position-vectors at the pulsar timestamps."
+            print "--> Grabbed the planet position-vectors at the pulsar timestamps."
 
         isort, iisort = None, None
         if 'pta' in self.T2psr.flags():
@@ -126,12 +127,8 @@ class PsrObj(object):
                     isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('group'),
                                                       which='jitterext', dt=jitterbin/86400.)
                 except KeyError:
-                    try:
-                        isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f'),
-                                                        which='jitterext', dt=jitterbin/86400.)
-                    except KeyError:
-                        isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('be'),
-                                                        which='jitterext', dt=jitterbin/86400.)
+                    isort, iisort = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f'),
+                                                      which='jitterext', dt=jitterbin/86400.)
         
                 # sort data
                 self.toas = self.toas[isort]
@@ -139,7 +136,8 @@ class PsrObj(object):
                 self.res = self.res[isort]
                 self.obs_freqs = self.obs_freqs[isort]
                 self.Mmat = self.Mmat[isort, :]
-                self.planet_ssb = self.planet_ssb[isort, :, :]
+                if planetssb:
+                    self.planet_ssb = self.planet_ssb[isort, :, :]
 
                 print "--> Initial sorting of data."
               
@@ -163,7 +161,7 @@ class PsrObj(object):
         ################################################################################################
             
         # These are all the relevant system flags used by the PTAs.
-        system_flags = ['group','sys','i','f','be']
+        system_flags = ['group','f','sys','g','h']
         self.sysflagdict = OrderedDict.fromkeys(system_flags)
 
         # Put the systems into a dictionary which 
@@ -194,29 +192,21 @@ class PsrObj(object):
             if len(pta_names)!=0 and ('NANOGrav' in pta_names):
                 try:
                     nanoflagdict = OrderedDict.fromkeys(['nano-f'])
-                    nano_flags = list(set(self.T2psr.flagvals('group')[pta_maskdict['NANOGrav']]))
+                    nano_flags = list(set(self.T2psr.flagvals('group')[isort][pta_maskdict['NANOGrav']]))
                     nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
                     for kk,subsys in enumerate(nano_flags):
                         nanoflagdict['nano-f'][subsys] = \
                           np.where(self.T2psr.flagvals('group')[isort] == nano_flags[kk])
                     self.sysflagdict.update(nanoflagdict)
                 except KeyError:
-                    try:
-                        nanoflagdict = OrderedDict.fromkeys(['nano-f'])
-                        nano_flags = list(set(self.T2psr.flagvals('f')[pta_maskdict['NANOGrav']]))
-                        nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
-                        for kk,subsys in enumerate(nano_flags):
-                            nanoflagdict['nano-f'][subsys] = \
-                              np.where(self.T2psr.flagvals('f')[isort] == nano_flags[kk])
-                        self.sysflagdict.update(nanoflagdict)
-                    except KeyError:
-                        nanoflagdict = OrderedDict.fromkeys(['nano-f'])
-                        nano_flags = list(set(self.T2psr.flagvals('be')[pta_maskdict['NANOGrav']]))
-                        nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
-                        for kk,subsys in enumerate(nano_flags):
-                            nanoflagdict['nano-f'][subsys] = \
-                              np.where(self.T2psr.flagvals('be')[isort] == nano_flags[kk])
-                        self.sysflagdict.update(nanoflagdict)
+                    nanoflagdict = OrderedDict.fromkeys(['nano-f'])
+                    nano_flags = list(set(self.T2psr.flagvals('f')[isort][pta_maskdict['NANOGrav']]))
+                    nanoflagdict['nano-f'] = OrderedDict.fromkeys(nano_flags)
+                    for kk,subsys in enumerate(nano_flags):
+                        nanoflagdict['nano-f'][subsys] = \
+                          np.where(self.T2psr.flagvals('f')[isort] == nano_flags[kk])
+                    self.sysflagdict.update(nanoflagdict)
+                    
                     
         
         # If there are really no relevant flags,
@@ -238,12 +228,9 @@ class PsrObj(object):
                     #which='jitterext', dt=jitterbin/86400.)
                     flags = self.T2psr.flagvals('group')[isort]
                 except KeyError:
-                    try:
                     #isort_b, iisort_b = utils.argsortTOAs(self.toas, self.T2psr.flagvals('f')[isort],
                     #which='jitterext', dt=jitterbin/86400.)
-                        flags = self.T2psr.flagvals('f')[isort]
-                    except KeyError:
-                        flags = self.T2psr.flagvals('be')[isort]
+                    flags = self.T2psr.flagvals('f')[isort]
         
                 # sort data
                 #self.toas = self.toas[isort_b]
@@ -378,6 +365,7 @@ class PsrObjFromH5(object):
     Fephx = None
     Fephy = None
     Fephz = None
+    Fclk = None
     Ftot = None
     ranphase = None
     diag_white = None
@@ -423,6 +411,7 @@ class PsrObjFromH5(object):
         self.Fephx = None
         self.Fephy = None
         self.Fephz = None
+        self.Fclk = None
         self.Ftot = None
         self.ranphase = None
         self.diag_white = None
@@ -642,7 +631,8 @@ class PsrObjFromH5(object):
         self.Ftot = np.append(self.Fred, self.Fdm, axis=1)
 
     def makeTe(self, nmodes_red, Ttot, makeDM=False, nmodes_dm=None,
-               makeEph=False, nmodes_eph=None, ephFreqs=None, phaseshift=False):
+               makeEph=False, nmodes_eph=None, ephFreqs=None,
+               makeClk=False, clkDesign=False, phaseshift=False):
 
         self.Fred, self.ranphase = utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes_red,
                                                                        pshift=phaseshift, Tspan=Ttot)
@@ -666,6 +656,10 @@ class PsrObjFromH5(object):
             self.Ftot = np.append(self.Ftot, self.Fephx, axis=1)
             self.Ftot = np.append(self.Ftot, self.Fephy, axis=1)
             self.Ftot = np.append(self.Ftot, self.Fephz, axis=1)
+        if makeClk and clkDesign:
+            self.Fclk, _ = utils.createFourierDesignmatrix_red(self.toas, nmodes=nmodes_red,
+                                                               pshift=False, Tspan=Ttot)
+            self.Ftot = np.append(self.Ftot, self.Fclk, axis=1)
         
         self.Te = np.append(self.Gc, self.Ftot, axis=1)
 

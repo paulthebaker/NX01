@@ -106,18 +106,20 @@ parser.add_option('--timfile', dest='timfile', action='store', type=str,
                    help='Full path to timfile')
 parser.add_option('--efacequad-sysflag', dest='systarg', action='store', type=str, default='group',
                    help='Which system flag should the EFACs/EQUADs target? (default = \'group\')')
-parser.add_option('--redamp-prior', dest='redamp_prior', action='store', type=str, default='loguniform',
+parser.add_option('--redPrior', dest='redPrior', action='store', type=str, default='loguniform',
                    help='What kind of prior to place on the red noise amplitude? (default = \'loguniform\')')
-parser.add_option('--dmamp-prior', dest='dmamp_prior', action='store', type=str, default='loguniform',
+parser.add_option('--dmPrior', dest='dmPrior', action='store', type=str, default='loguniform',
                    help='What kind of prior to place on the DM variation amplitude? (default = \'loguniform\')')
-parser.add_option('--dmVar', dest='dmVar', action='store_true', default=False,
+parser.add_option('--incDM', dest='incDM', action='store_true', default=False,
                    help='Search for DM variations in the data (False)? (default=False)')
 parser.add_option('--fullN', dest='fullN', action='store_true', default=False,
                    help='Search for EFAC/EQUAD/ECORR over all systems (True), or just apply a GEFAC (False)? (default=False)')
+parser.add_option('--grab_planets', dest='grab_planets', action='store_true', default=False,
+                   help='Grab the planet position vectors at the TOA timestamps? (default=False)')
 parser.add_option('--incGlitch', dest='incGlitch', action='store_true', default=False,
                    help='Search for a glitch in the pulsar? (default=False)')
 parser.add_option('--jitterbin', dest='jitterbin', action='store', type=float, default=1.0,
-                   help='What time duration do you want a jitter bin to be? (default = 1.0)')
+                   help='What time duration (in seconds) do you want a jitter bin to be? (default = 1.0)')
 parser.add_option('--mnest', dest='mnest', action='store_true', default=False,
                    help='Do you want to sample using MultiNest? (default=False)')
 parser.add_option('--writeHotChains', dest='writeHotChains', action='store_true', default=False,
@@ -184,7 +186,8 @@ if np.any(np.isfinite(t2psr.residuals())==False)==True:
     t2psr = T2.tempopulsar(parfile=args.parfile,timfile=args.timfile)
 
 psr = NX01_psr.PsrObj(t2psr)
-psr.grab_all_vars(jitterbin=args.jitterbin)
+psr.grab_all_vars(jitterbin=args.jitterbin, makeGmat=False,
+                  fastDesign=True, planetssb=args.grab_planets)
 
 #############################################################################
 # GETTING MAXIMUM TIME, COMPUTING FOURIER DESIGN MATRICES, AND GETTING MODES 
@@ -194,7 +197,7 @@ Tmax = psr.toas.max() - psr.toas.min()
 
 if args.nmodes:
 
-    psr.makeTe(args.nmodes, Tmax, makeDM=args.dmVar)
+    psr.makeTe(args.nmodes, Tmax, makeDM=args.incDM)
     # get GW frequencies
     fqs = np.linspace(1/Tmax, args.nmodes/Tmax, args.nmodes)
     nmode = args.nmodes
@@ -202,7 +205,7 @@ if args.nmodes:
 else:
 
     nmode = int(round(Tmax/args.cadence))
-    psr.makeTe(nmode, Tmax, makeDM=args.dmVar)
+    psr.makeTe(nmode, Tmax, makeDM=args.incDM)
     # get GW frequencies
     fqs = np.linspace(1/Tmax, nmode/Tmax, nmode)
 
@@ -222,7 +225,7 @@ else:
 
 pmin = np.array([-20.0,0.0])
 pmax = np.array([-11.0,7.0])
-if args.dmVar:
+if args.incDM:
     pmin = np.append(pmin,np.array([-20.0,0.0]))
     pmax = np.append(pmax,np.array([-8.0,7.0]))       
 pmin = np.append(pmin,0.001*np.ones(len(systems)))
@@ -231,9 +234,10 @@ if args.fullN:
     pmin = np.append(pmin,-10.0*np.ones(len(systems)))
     pmax = np.append(pmax,-3.0*np.ones(len(systems)))
     if 'pta' in t2psr.flags():
-        if len(psr.sysflagdict['nano-f'].keys())>0:
-            pmin = np.append(pmin, -10.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
-            pmax = np.append(pmax, -3.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+        if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+            if len(psr.sysflagdict['nano-f'].keys())>0:
+                pmin = np.append(pmin, -10.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+                pmax = np.append(pmax, -3.0*np.ones(len(psr.sysflagdict['nano-f'].keys())))
 if args.incGlitch:
     pmin = np.append(pmin,[np.min(psr.toas),-18.0])
     pmax = np.append(pmax,[np.max(psr.toas),-11.0])
@@ -259,7 +263,7 @@ def ln_prob(xx):
     gam_red = xx[1]
 
     ct = 2
-    if args.dmVar:
+    if args.incDM:
         Adm = 10.0**xx[ct]
         gam_dm = xx[ct+1]
         ct = 4
@@ -271,16 +275,18 @@ def ln_prob(xx):
         EQUAD = 10.0**xx[ct:ct+len(systems)]
         ct += len(systems)
 
+        ECORR = []
         if 'pta' in t2psr.flags():
-            if len(psr.sysflagdict['nano-f'].keys())>0:
-                ECORR = 10.0**xx[ct:ct+len(psr.sysflagdict['nano-f'].keys())]
-                ct += len(psr.sysflagdict['nano-f'].keys())
+            if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+                if len(psr.sysflagdict['nano-f'].keys())>0:
+                    ECORR = 10.0**xx[ct:ct+len(psr.sysflagdict['nano-f'].keys())]
+                    ct += len(psr.sysflagdict['nano-f'].keys())
             
     if args.incGlitch:
         glitch_epoch = xx[ct]
         glitch_lamp = xx[ct+1]
 
-    loglike1 = 0
+    loglike1 = 0.
 
     ####################################
     ####################################
@@ -353,7 +359,7 @@ def ln_prob(xx):
     f1yr = 1/3.16e7
 
     # parameterize intrinsic red-noise and DM-variations as power law
-    if args.dmVar:
+    if args.incDM:
         kappa = np.log10( np.append( Ared**2/12/np.pi**2 * \
                                      f1yr**(gam_red-3) * \
                                      (fqs/86400.0)**(-gam_red)/Tspan,
@@ -366,7 +372,7 @@ def ln_prob(xx):
                           (fqs/86400.0)**(-gam_red)/Tspan )
 
     # construct elements of sigma array
-    if args.dmVar:
+    if args.incDM:
         mode_count = 4*nmode
     else:
         mode_count = 2*nmode
@@ -408,9 +414,9 @@ def ln_prob(xx):
       0.5 * (np.dot(d, expval2)) + loglike1
 
     prior_fac = 0.0
-    if args.redamp_prior == 'uniform':
+    if args.redPrior == 'uniform':
         prior_fac += np.log(Ared * np.log(10.0))
-    if (args.dmVar==True) and (args.dmamp_prior == 'uniform'):
+    if args.incDM and (args.dmPrior == 'uniform'):
         prior_fac += np.log(Adm * np.log(10.0))
     
     return logLike + prior_fac
@@ -420,7 +426,7 @@ def ln_prob(xx):
 #########################
 
 parameters = ["log(A_red)","gam_red"]
-if args.dmVar:
+if args.incDM:
     parameters.append("log(A_dm)")
     parameters.append("gam_dm")
 for ii in range(len(systems)):
@@ -429,11 +435,13 @@ if args.fullN:
     for ii in range(len(systems)):
         parameters.append('EQUAD_'+systems.keys()[ii])
 
-    if 'pta' in t2psr.flags() and len(psr.sysflagdict['nano-f'].keys())>0:
-        if rank == 0:
-            print "\n You have some NANOGrav ECORR parameters..."
-        for ii,nano_sysname in enumerate(psr.sysflagdict['nano-f'].keys()):
-            parameters.append('ECORR_'+nano_sysname)
+    if 'pta' in t2psr.flags():
+        if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+            if len(psr.sysflagdict['nano-f'].keys())>0:
+                if rank == 0:
+                    print "\n You have some NANOGrav ECORR parameters..."
+                for ii,nano_sysname in enumerate(psr.sysflagdict['nano-f'].keys()):
+                    parameters.append('ECORR_'+nano_sysname)
 if args.incGlitch:
     parameters += ["glitch_epoch","glitch_lamp"]
 
@@ -446,12 +454,12 @@ if rank == 0:
 # Define a unique file tag
 
 file_tag = 'pta_'+psr.name
-file_tag += '_red{0}'.format(args.redamp_prior)
-if args.dmVar:
-    file_tag += '_dm{0}'.format(args.dmamp_prior)
+file_tag += '_red{0}'.format(args.redPrior)
+if args.incDM:
+    file_tag += '_dm{0}'.format(args.dmPrior)
 if args.incGlitch:
     file_tag += '_glitch'
-file_tag += '_nmodes{0}'.format(args.nmodes)
+file_tag += '_nmodes{0}'.format(nmode)
 
 #####################
 # Now, we sample....
@@ -477,9 +485,11 @@ if args.sampler == 'mnest':
 
     #dir_name = './chains_nanoAnalysis/nano_singlePsr/'+file_tag+'_mnest'
     #dir_name = './chn_eptapsr/'+file_tag+'_mnest'
+    
     dir_name = args.dirExt+file_tag+'_mnest'
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
+    if rank == 0:
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
 
     if rank == 0:
 
@@ -514,7 +524,7 @@ if args.sampler == 'ptmcmc':
     x0 = np.array([-15.0,2.0])
     cov_diag = np.array([0.5,0.5])
     
-    if args.dmVar:
+    if args.incDM:
         x0 = np.append(x0,np.array([-15.0,2.0]))
         cov_diag = np.append(cov_diag,np.array([0.5,0.5]))
 
@@ -524,16 +534,65 @@ if args.sampler == 'ptmcmc':
     if args.fullN:
         x0 = np.append(x0,np.random.uniform(-10.0,-5.0,len(systems)))
         cov_diag = np.append(cov_diag,0.5*np.ones(len(systems)))
-        if len(psr.sysflagdict['nano-f'].keys())>0:
-            x0 = np.append(x0, np.random.uniform(-8.5,-5.0,len(psr.sysflagdict['nano-f'].keys())))
-            cov_diag = np.append(cov_diag,0.5*np.ones(len(psr.sysflagdict['nano-f'].keys())))
-    
+        if 'pta' in t2psr.flags():
+            if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+                if len(psr.sysflagdict['nano-f'].keys())>0:
+                    x0 = np.append(x0, np.random.uniform(-8.5,-5.0,len(psr.sysflagdict['nano-f'].keys())))
+                    cov_diag = np.append(cov_diag,0.5*np.ones(len(psr.sysflagdict['nano-f'].keys())))
+        
     if rank == 0:
         print "\n Your initial parameters are {0}\n".format(x0)
+        print "\n Running a quick profile on the likelihood to estimate evaluation speed...\n"
+        cProfile.run('ln_prob(x0)')
 
+    ########################################
+    # Creating parameter sampling groupings
+    
+    ind = []
+    param_ct = 0
+    ##### red noise #####
+    ids = [[0,1]]
+    [ind.append(id) for id in ids]
+    param_ct += 2
+        
+    ##### DM noise #####
+    if args.incDM:
+        ids = [[2,3]]
+        [ind.append(id) for id in ids]
+        param_ct += 2
+
+    ##### White noise #####
+    if args.fullN:
+        efacs = [param_ct+ii for ii in range(len(systems))]
+        ids = [efacs]
+        [ind.append(id) for id in ids if len(id) > 0]
+        param_ct += len(systems)
+        ##
+        equads = [param_ct+ii for ii in range(len(systems))]
+        ids = [equads]
+        [ind.append(id) for id in ids if len(id) > 0]
+        param_ct += len(systems)
+        ##
+        if 'pta' in t2psr.flags():
+            if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+                ecorrs = [param_ct+ii for ii
+                          in range(len(psr.sysflagdict['nano-f'].keys()))]
+                ids = [ecorrs]
+                [ind.append(id) for id in ids if len(id) > 0]
+                param_ct += len(psr.sysflagdict['nano-f'].keys())
+
+    ##### all parameters #####
+    all_inds = range(len(x0))
+    ind.insert(0, all_inds)
+    if rank == 0:
+        print "Your parameter index groupings for sampling are {0}".format(ind)
+
+    ########
+    
     dir_name = args.dirExt+file_tag+'_ptmcmc'
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
+    if rank == 0:
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
 
     if rank == 0:
 
@@ -550,7 +609,7 @@ if args.sampler == 'ptmcmc':
     sampler = ptmcmc.PTSampler(ndim = n_params, logl = ln_prob,
                             logp = my_prior, cov = np.diag(cov_diag),
                             outDir='./{0}'.format(dir_name),
-                            resume = args.resume)
+                            resume = args.resume, groups = ind)
 
     def drawFromRedNoisePrior(parameters, iter, beta):
 
@@ -561,18 +620,12 @@ if args.sampler == 'ptmcmc':
         qxy = 0
 
         # log prior
-        if args.redamp_prior == 'loguniform':
-            
+        if args.redPrior == 'loguniform':
             q[0] = np.random.uniform(pmin[0], pmax[0])
             qxy += 0
-
-        elif args.redamp_prior == 'uniform':
-            
+        elif args.redPrior == 'uniform':
             q[0] = np.random.uniform(pmin[0], pmax[0])
             qxy += 0
-
-            #Ared = np.log10(np.random.uniform(10 ** Ared_ll, 10 ** Ared_ul, len(Ared)))
-            #qxy += np.log(10 ** parameters[parind] / 10 ** q[parind])
 
         q[1] = np.random.uniform(pmin[1], pmax[1])
     
@@ -589,22 +642,35 @@ if args.sampler == 'ptmcmc':
         qxy = 0
 
         # log prior
-        if args.dmamp_prior == 'loguniform':
-            
+        if args.dmPrior == 'loguniform':
             q[2] = np.random.uniform(pmin[2], pmax[2])
             qxy += 0
-
-        elif args.dmamp_prior == 'uniform':
-            
+        elif args.dmPrior == 'uniform':
             q[2] = np.random.uniform(pmin[2], pmax[2])
             qxy += 0
-
-            #Ared = np.log10(np.random.uniform(10 ** Ared_ll, 10 ** Ared_ul, len(Ared)))
-            #qxy += np.log(10 ** parameters[parind] / 10 ** q[parind])
 
         q[3] = np.random.uniform(pmin[3], pmax[3])
     
         qxy += 0
+        
+        return q, qxy
+
+    def drawFromEfacPrior(parameters, iter, beta):
+
+        # post-jump parameters
+        q = parameters.copy()
+
+        # transition probability
+        qxy = 0
+
+        if args.incDM:
+            ind = np.unique(np.random.randint(4, 4+len(systems), 1))
+        else:
+            ind = np.unique(np.random.randint(2, 2+len(systems), 1))
+
+        for ii in ind:
+            q[ii] = np.random.uniform(pmin[ii], pmax[ii])
+            qxy += 0
         
         return q, qxy
 
@@ -616,16 +682,14 @@ if args.sampler == 'ptmcmc':
         # transition probability
         qxy = 0
 
-        if args.dmVar==True:
-            ind = np.arange(4+len(systems),4+2*len(systems))
+        if args.incDM:
+            ind = np.unique(np.random.randint(4+len(systems), 4+2*len(systems), 1))
         else:
-            ind = np.arange(2+len(systems),2+2*len(systems))
-        equad_jump = np.zeros(len(q))
-        equad_jump[ind] = np.random.uniform(pmin[ind[0]], pmax[ind[0]], len(systems))
+            ind = np.unique(np.random.randint(2+len(systems), 2+2*len(systems), 1))
 
-        q = equad_jump
-        
-        qxy += 0
+        for ii in ind:
+            q[ii] = np.random.uniform(pmin[ii], pmax[ii])
+            qxy += 0
         
         return q, qxy
 
@@ -637,29 +701,31 @@ if args.sampler == 'ptmcmc':
         # transition probability
         qxy = 0
 
-        if args.dmVar==True:
-            ind = np.arange(4+2*len(systems),4+3*len(systems))
+        if args.incDM:
+            ind = np.unique(np.random.randint(4+2*len(systems), 4+2*len(systems)+len(psr.sysflagdict['nano-f'].keys()), 1))
         else:
-            ind = np.arange(2+2*len(systems),2+3*len(systems))
-        ecorr_jump = np.zeros(len(q))
-        ecorr_jump[ind] = np.random.uniform(pmin[ind[0]], pmax[ind[0]], len(systems))
+            ind = np.unique(np.random.randint(2+2*len(systems), 2+2*len(systems)+len(psr.sysflagdict['nano-f'].keys()), 1))
 
-        q = ecorr_jump
-        
-        qxy += 0
-        
+        for ii in ind:
+            q[ii] = np.random.uniform(pmin[ii], pmax[ii])
+            qxy += 0
+
         return q, qxy
 
 
     # add jump proposals
     sampler.addProposalToCycle(drawFromRedNoisePrior, 10)
-    if args.dmVar:
+    if args.incDM:
         sampler.addProposalToCycle(drawFromDMNoisePrior, 10)
-    sampler.addProposalToCycle(drawFromEquadPrior, 10)
-    if (args.fullN==True) and (len(psr.sysflagdict['nano-f'].keys())>0):
-        sampler.addProposalToCycle(drawFromEcorrPrior, 10)
+    if args.fullN:
+        sampler.addProposalToCycle(drawFromEfacPrior, 10)
+        sampler.addProposalToCycle(drawFromEquadPrior, 10)
+        if 'pta' in t2psr.flags():
+            if 'NANOGrav' in list(set(t2psr.flagvals('pta'))):
+                if len(psr.sysflagdict['nano-f'].keys())>0:
+                    sampler.addProposalToCycle(drawFromEcorrPrior, 10)
 
-    sampler.sample(p0=x0, Niter=5e6, thin=10,
+    sampler.sample(p0=x0, Niter=int(5e6), thin=10,
                 covUpdate=1000, AMweight=20,
                 SCAMweight=30, DEweight=50,
                 writeHotChains=args.writeHotChains,

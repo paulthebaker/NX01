@@ -119,6 +119,8 @@ parser.add_option('--hotChain', dest='hotChain', action='store_true', default=Fa
                    help='Given a PTMCMC sampler, do you want to use a T=1e80 hot chain? (default = False)')
 parser.add_option('--softParam', dest='softParam', action='store', type=float, default=1.0,
                    help='Artifical temperature by which to soften likelihood (default = 1.0)')
+parser.add_option('--shortFileTag', dest='shortFileTag', action='store', type=str, default=None,
+                  help='Provide a shorter file tag for MultiNest runs? (default = None)')
 parser.add_option('--TmaxType', dest='TmaxType', action='store', type=str, default='pta',
                    help='Which type of Tmax to use to set frequencies: pta (longest baseline over the array), or pulsar (longest pulsar in array) (default = pta)')
 parser.add_option('--incGWB', dest='incGWB', action='store_true', default=False,
@@ -169,6 +171,8 @@ parser.add_option('--ephFreqs', dest='ephFreqs', action='store', type=str, defau
                   help='Provide the ephemeris-error model frequencies as a comma delimited string (default = None)')
 parser.add_option('--incClk', dest='incClk', action='store_true', default=False,
                   help='Do you want to search for clock errors? (default = False)')
+parser.add_option('--clkDesign', dest='clkDesign', action='store_true', default=False,
+                  help='Do you want to model clock errors in a separate basis from the red-noise and GWB? (default = False)')
 parser.add_option('--clkSpecModel', dest='clkSpecModel', action='store', type=str, default='powerlaw',
                   help='What kind of spectral model do you want for the clock errors?: powerlaw, spectrum (default = powerlaw)')
 parser.add_option('--incCm', dest='incCm', action='store_true', default=False,
@@ -691,7 +695,7 @@ if args.incEph:
 ### Make the basis matrices for all rank-reduced processes in model
 [p.makeTe(nmodes_red, Tmax, makeDM=args.incDM, nmodes_dm=nmodes_dm,
           makeEph=args.incEph, nmodes_eph=nmodes_eph, ephFreqs=args.ephFreqs,
-          phaseshift=args.pshift) for p in psr]
+          makeClk=args.incClk, clkDesign=args.clkDesign, phaseshift=args.pshift) for p in psr]
 
 if args.det_signal:
     # find reference time for all pulsars
@@ -872,7 +876,7 @@ if args.incClk:
         pmin = np.append(pmin,-8.0*np.ones(nmodes_red))
 if args.incCm:
     if args.cmSpecModel == 'powerlaw':
-        pmin = np.append(pmin,-20.0)
+        pmin = np.append(pmin,-18.0)
         pmin = np.append(pmin,0.0)
     elif args.cmSpecModel == 'spectrum':
         pmin = np.append(pmin,-8.0*np.ones(nmodes_red))
@@ -1123,6 +1127,8 @@ def lnprob(xx):
     if args.incEph:
         # 2*nmode for x,y,z
         mode_count += 6*nmodes_eph
+    if args.incClk and args.clkDesign:
+        mode_count += 2*nmodes_red
     
     ###############################
     # Splitting up parameter vector
@@ -1599,6 +1605,10 @@ def lnprob(xx):
                         for ii in range(nmodes_eph):
                             ORF.append( np.zeros((npsr,npsr)) )
 
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
+
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
                                                           # but the projection of GW spec onto dmfreqs
@@ -1650,6 +1660,10 @@ def lnprob(xx):
                         for ii in range(nmodes_eph): 
                             ORF.append( np.zeros((npsr,npsr)) )
 
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
+
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
                                                           # but the projection of GW spec onto dmfreqs
@@ -1696,6 +1710,10 @@ def lnprob(xx):
                     for kk in range(3): # x,y,z
                         for ii in range(nmodes_eph):
                             ORF.append( np.zeros((npsr,npsr)) )
+
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
 
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
@@ -1760,6 +1778,10 @@ def lnprob(xx):
                         for ii in range(nmodes_eph): 
                             ORF.append( np.zeros((npsr,npsr)) )
 
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
+
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
                                                           # but the projection of GW spec onto dmfreqs
@@ -1787,6 +1809,10 @@ def lnprob(xx):
                     for kk in range(3): # x,y,z
                         for ii in range(nmodes_eph): # number of frequencies
                             ORF.append( np.zeros((npsr,npsr)) )
+
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
 
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs
@@ -1842,6 +1868,10 @@ def lnprob(xx):
                         for ii in range(nmodes_eph): 
                             ORF.append( np.zeros((npsr,npsr)) )
 
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
+
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
                                                           # but the projection of GW spec onto dmfreqs
@@ -1881,6 +1911,10 @@ def lnprob(xx):
                         for ii in range(nmodes_eph): 
                             ORF.append( np.zeros((npsr,npsr)) )
 
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
+
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
                                                           # but the projection of GW spec onto dmfreqs
@@ -1903,6 +1937,10 @@ def lnprob(xx):
                     for kk in range(3): # x,y,z
                         for ii in range(nmodes_eph): 
                             ORF.append( np.zeros((npsr,npsr)) )
+
+                if args.incClk and args.clkDesign:
+                    for ii in range(nmodes_red): 
+                        ORF.append( np.zeros((npsr,npsr)) )
 
                 ORF = np.array(ORF)
                 ORFtot = np.zeros((mode_count,npsr,npsr)) # shouldn't be applying ORF to dmfreqs,
@@ -1988,10 +2026,16 @@ def lnprob(xx):
             elif not args.incEph:
                 eph_padding = np.array([])
 
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+            else:
+                clk_padding = np.array([])
+
             # Now create total red signal for each pulsar
             kappa.append(np.concatenate((10**red_kappa_tmp,
                                          10**dm_kappa_tmp,
-                                         eph_padding)))
+                                         eph_padding,
+                                         clk_padding)))
     
                 
         ###################################
@@ -2064,8 +2108,14 @@ def lnprob(xx):
                 eph_padding = np.zeros(3*nmodes_eph)
             elif not args.incEph:
                 eph_padding = np.array([])
+
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+            else:
+                clk_padding = np.array([])
                     
-            gwbspec = np.concatenate( (10**rho, dm_padding, eph_padding) )
+            gwbspec = np.concatenate( (10**rho, dm_padding,
+                                       eph_padding, clk_padding) )
             
             if args.incCorr:
                 sig_gwboffdiag = []
@@ -2085,10 +2135,16 @@ def lnprob(xx):
                 eph_padding = np.zeros(3*nmodes_eph)
             elif not args.incEph:
                 eph_padding = np.array([])
+
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+            else:
+                clk_padding = np.array([])
             
             gwline_spec = np.concatenate( (rho_line,
                                            dm_padding,
-                                           eph_padding) )
+                                           eph_padding,
+                                           clk_padding) )
            
             if args.incCorr:
                 sig_gwlineoffdiag = []
@@ -2113,10 +2169,19 @@ def lnprob(xx):
                 eph_padding = np.zeros(3*nmodes_eph)
             elif not args.incEph:
                 eph_padding = np.array([])
-                    
-            clkspec = np.concatenate( (10**kappa_clk,
-                                       dm_padding,
-                                       eph_padding) )
+
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+                clkspec = np.concatenate( (clk_padding,
+                                           dm_padding,
+                                           eph_padding,
+                                           10**kappa_clk) )
+            else:
+                clk_padding = np.array([])
+                clkspec = np.concatenate( (10**kappa_clk,
+                                           dm_padding,
+                                           eph_padding,
+                                           clk_padding) )
 
             if args.incCorr:
                 sig_clkoffdiag = []
@@ -2141,8 +2206,14 @@ def lnprob(xx):
                 eph_padding = np.zeros(3*nmodes_eph)
             elif not args.incEph:
                 eph_padding = np.array([])
+
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+            else:
+                clk_padding = np.array([])
                     
-            cmspec = np.concatenate( (10**kappa_cm, dm_padding, eph_padding) )
+            cmspec = np.concatenate( (10**kappa_cm, dm_padding,
+                                      eph_padding, clk_padding) )
     
                 
         if args.incEph:
@@ -2168,9 +2239,14 @@ def lnprob(xx):
             elif not args.incDM:
                 dm_padding = np.array([])
 
+            if args.incClk and args.clkDesign:
+                clk_padding = np.zeros(nmodes_red)
+            else:
+                clk_padding = np.array([])
+
             eph_kappa = np.concatenate( (red_padding, dm_padding,
                                          10**kappa_ephx, 10**kappa_ephy,
-                                         10**kappa_ephz) )
+                                         10**kappa_ephz, clk_padding) )
         
 
         for ii in range(npsr):
@@ -2236,8 +2312,12 @@ def lnprob(xx):
                     offdiag[1::2] = clkspec
 
                     # diagonal terms
-                    tot[0::2] += clkspec
-                    tot[1::2] += clkspec
+                    if args.clkDesign:
+                        tot[0::2] += (1.0 + 1e-5)*clkspec
+                        tot[1::2] += (1.0 + 1e-5)*clkspec
+                    elif not args.clkDesign:
+                        tot[0::2] += clkspec
+                        tot[1::2] += clkspec
 
                     sig_clkoffdiag.append(offdiag)
                 
@@ -2288,7 +2368,6 @@ def lnprob(xx):
                 
                 # cholesky decomp 
                 try:
-                    #print p.name, np.any(np.isnan(p.Mmat)), np.any(np.isnan(Phi)), np.any(np.isnan(Sigma))
                     cf = sl.cho_factor(Sigma)
                     expval2 = sl.cho_solve(cf, dtmp[ii])
                     logdet_Sigma = np.sum(2*np.log(np.diag(cf[0])))
@@ -3024,7 +3103,10 @@ if rank == 0:
 
 if args.sampler == 'mnest':
 
-    dir_name = args.dirExt+file_tag+'_mnest'
+    if args.shortFileTag is not None:
+        dir_name = args.dirExt+args.shortFileTag+'_mnest'
+    else:
+        dir_name = args.dirExt+file_tag+'_mnest'
 
     if rank == 0:
         if not os.path.exists(dir_name):
